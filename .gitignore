@@ -10,3 +10,9 @@ nginx/ssl/*.key
 
 # 系统文件
 .DS_Store
+
+# SSL 私钥（敏感）
+mysql/ssl/*-key.pem
+
+# 备份文件
+*.bak

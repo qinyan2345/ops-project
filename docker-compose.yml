@@ -3,11 +3,17 @@ version: '3.8'
 networks:
   app-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
   mysql-data:
   redis-data:
   grafana-data:
+  gitea-data:
+  redis-slave-data:
+  mysql-slave-data:
 
 services:
   mysql:
@@ -17,11 +23,16 @@ services:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: appdb
     command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
       - --innodb-buffer-pool-size=256M
       - --max-connections=100
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./mysql/ssl:/etc/mysql/ssl:ro      
+      - /etc/ssl/certs/ca-certificates.crt:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:ro
     networks: [app-net]
     restart: always
     mem_limit: 512m
@@ -31,13 +42,36 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
+  mysql-slave:
+    image: mysql:8.0
+    container_name: mysql-slave
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+    command:
+      - --server-id=2
+      - --relay-log=relay-bin
+      - --read-only=1
+      - --innodb-buffer-pool-size=256M
+    volumes:
+      - mysql-slave-data:/var/lib/mysql
+      - ./mysql/ssl:/etc/mysql/ssl:ro      
+      - /etc/ssl/certs/ca-certificates.crt:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks: [app-net]
+    restart: always
+    mem_limit: 512m
+
+  redis-master:
     image: redis:6-alpine
-    container_name: redis
+    container_name: redis-master
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data
-    networks: [app-net]
+    networks:
+      app-net:
+        ipv4_address: 172.20.0.10
     restart: always
     mem_limit: 192m
     healthcheck:
@@ -46,20 +80,91 @@ services:
       timeout: 5s
       retries: 5
 
+  redis-slave:
+    image: redis:6-alpine
+    container_name: redis-slave
+    command: redis-server --slaveof 172.20.0.10 6379 --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-slave-data:/data
+    depends_on: [redis-master]
+    networks:
+      app-net:
+        ipv4_address: 172.20.0.11
+    restart: always
+    mem_limit: 192m
+  sentinel1:
+    image: redis:6-alpine
+    container_name: sentinel1
+    command: sh -c "cp /etc/sentinel.conf /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf"
+    volumes:
+      - ./redis/sentinel.conf:/etc/sentinel.conf:ro
+    depends_on: [redis-master, redis-slave]
+    networks: [app-net]
+    restart: always
+    mem_limit: 64m
+
+  sentinel2:
+    image: redis:6-alpine
+    container_name: sentinel2
+    command: sh -c "cp /etc/sentinel.conf /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf"
+    volumes:
+      - ./redis/sentinel.conf:/etc/sentinel.conf:ro
+    depends_on: [redis-master, redis-slave]
+    networks: [app-net]
+    restart: always
+    mem_limit: 64m
+
+  sentinel3:
+    image: redis:6-alpine
+    container_name: sentinel3
+    command: sh -c "cp /etc/sentinel.conf /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf"
+    volumes:
+      - ./redis/sentinel.conf:/etc/sentinel.conf:ro
+    depends_on: [redis-master, redis-slave]
+    networks: [app-net]
+    restart: always
+    mem_limit: 64m
+
   flask:
     build: ./flask
     container_name: flask
     environment:
       MYSQL_HOST: mysql
-      REDIS_HOST: redis
+      REDIS_HOST: redis-master
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
+      redis-master:
         condition: service_healthy
     networks: [app-net]
     restart: always
     mem_limit: 256m
+
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    environment:
+      - GITEA__database__DB_TYPE=mysql
+      - GITEA__database__HOST=mysql:3306
+      - GITEA__database__NAME=gitea
+      - GITEA__database__USER=gitea
+      - GITEA__database__PASSWD=gitea123
+      - GITEA__server__DOMAIN=192.168.133.100
+      - GITEA__server__SSH_DOMAIN=192.168.133.100
+      - GITEA__server__ROOT_URL=https://192.168.133.100/gitea/
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__metrics__ENABLED=true
+    ports:
+      - "3001:3000"
+      - "2222:22"
+    volumes:
+      - gitea-data:/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks: [app-net]
+    restart: always
+    mem_limit: 512m
 
   nginx:
     image: nginx:alpine

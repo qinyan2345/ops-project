@@ -1,10 +1,27 @@
+from dbutils.pooled_db import PooledDB
+from prometheus_flask_exporter import PrometheusMetrics
 from flask import Flask, jsonify
 import pymysql
 import redis
 import os
 
 app = Flask(__name__)
-r = redis.Redis(host='redis', port=6379, decode_responses=True)
+metrics = PrometheusMetrics(app)
+r = redis.Redis(host='redis-master', port=6379, decode_responses=True)
+
+pool = PooledDB(
+    creator=pymysql,
+    maxconnections=10,
+    mincached=2,
+    host='mysql', user='root', password='root123', database='appdb'
+)
+
+pool_slave = PooledDB(
+    creator=pymysql,
+    maxconnections=10,
+    mincached=2,
+    host='mysql-slave', user='root', password='root123', database='appdb'
+)
 
 @app.route('/')
 def index():
@@ -35,6 +52,7 @@ def index():
     </body>
     </html>
     '''
+
 @app.route('/health')
 def health():
     return "OK"
@@ -46,12 +64,14 @@ def get_user(uid):
     if cached:
         r.incr("cache_hit")
         return jsonify({"source": "cache", "data": cached})
-    conn = pymysql.connect(host='mysql', user='root',
-                           password='root123', database='appdb')
-    with conn.cursor() as cur:
-        cur.execute("SELECT name, email FROM users WHERE id=%s", (uid,))
-        row = cur.fetchone()
-    conn.close()
+    conn = pool_slave.connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name, email FROM users WHERE id=%s", (uid,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
     if not row:
         return jsonify({"error": "not found"}), 404
     data = f"{row[0]},{row[1]}"
