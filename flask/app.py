@@ -39,7 +39,7 @@ def index():
         .tag { color: #888; font-size: 12px; }
     </style></head>
     <body>
-        <h2>运维平台 Demo</h2>
+    <h2>运维平台 Demo v2</h2>
         <a href="/api/user/1">查询用户 1 (Alice)</a>
         <a href="/api/user/2">查询用户 2 (Bob)</a>
         <a href="/api/user/3">查询用户 3 (Charlie)</a>
