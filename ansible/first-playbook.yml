@@ -1,0 +1,13 @@
+---
+- name: 我的第一个 Playbook
+  hosts: local
+  tasks:
+    - name: 输出一条消息
+      debug:
+        msg: "Ansible 正在管理 {{ inventory_hostname }}"
+
+    - name: 创建一个测试目录
+      file:
+        path: /tmp/ansible-test
+        state: directory
+        mode: '0755'

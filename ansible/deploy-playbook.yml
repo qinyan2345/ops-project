@@ -1,0 +1,46 @@
+---
+- name: 部署运维平台项目
+  hosts: local
+  tasks:
+    - name: 检查 Docker 是否安装
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: 安装 Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+      when: docker_check.rc != 0
+      become: yes
+
+    - name: 确保 Docker 服务已启动
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: 检查项目目录是否存在
+      stat:
+        path: /home/qinyan/ops-project
+      register: project_dir
+
+    - name: 拉取项目代码
+      git:
+        repo: ssh://git@192.168.133.100:2222/qinyan/ops-project.git
+        dest: /home/qinyan/ops-project
+        version: main
+        accept_hostkey: yes
+      when: not project_dir.stat.exists
+      become: yes
+      become_user: qinyan
+
+    - name: 启动所有服务
+      command: docker-compose up -d
+      args:
+        chdir: /home/qinyan/ops-project
+      become: yes
+      become_user: qinyan
